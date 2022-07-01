@@ -83,7 +83,7 @@ public class MixAll {
     public static final String CID_SYS_RMQ_TRANS = "CID_RMQ_SYS_TRANS";
     public static final String ACL_CONF_TOOLS_FILE = "/conf/tools.yml";
     public static final String REPLY_MESSAGE_FLAG = "reply";
-    public static final String LMQ_PREFIX = "%LMQ%";
+    public static final String LMQ_PREFIX = "%LMQ%";//MQTT
     public static final String MULTI_DISPATCH_QUEUE_SPLITTER = ",";
     private static final InternalLogger log = InternalLoggerFactory.getLogger(LoggerName.COMMON_LOGGER_NAME);
 

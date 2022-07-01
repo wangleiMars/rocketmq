@@ -288,13 +288,13 @@ public abstract class AbstractSendMessageProcessor extends AsyncNettyRequestProc
         switch (request.getCode()) {
             case RequestCode.SEND_BATCH_MESSAGE:
             case RequestCode.SEND_MESSAGE_V2:
-                requestHeaderV2 = decodeSendMessageHeaderV2(request);
+                requestHeaderV2 = decodeSendMessageHeaderV2(request);//解码压缩消息
             case RequestCode.SEND_MESSAGE:
                 if (null == requestHeaderV2) {
                     requestHeader =
                         (SendMessageRequestHeader) request
-                            .decodeCommandCustomHeader(SendMessageRequestHeader.class);
-                } else {
+                            .decodeCommandCustomHeader(SendMessageRequestHeader.class);//普通消息
+                } else {// 压缩消息转换成正常的bean
                     requestHeader = SendMessageRequestHeaderV2.createSendMessageRequestHeaderV1(requestHeaderV2);
                 }
             default:

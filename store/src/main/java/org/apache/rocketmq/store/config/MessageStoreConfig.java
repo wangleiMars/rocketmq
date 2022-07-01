@@ -49,7 +49,7 @@ public class MessageStoreConfig {
     private int bitMapLengthConsumeQueueExt = 64;
 
     // CommitLog flush interval
-    // flush data to disk
+    // flush data to disk 刷新到磁盘的时间间隔
     @ImportantField
     private int flushIntervalCommitLog = 500;
 
@@ -63,7 +63,7 @@ public class MessageStoreConfig {
      */
     private boolean useReentrantLockWhenPutMessage = true;
 
-    // Whether schedule flush
+    // Whether schedule flush 是否定时刷新日志
     @ImportantField
     private boolean flushCommitLogTimed = true;
     // ConsumeQueue flush interval
@@ -91,7 +91,7 @@ public class MessageStoreConfig {
     // This ensures no on-the-wire or on-disk corruption to the messages occurred.
     // This check adds some overhead,so it may be disabled in cases seeking extreme performance.
     private boolean checkCRCOnRecover = true;
-    // How many pages are to be flushed when flush CommitLog
+    // How many pages are to be flushed when flush CommitLog 一次刷新到磁盘的最少页数
     private int flushCommitLogLeastPages = 4;
     // How many pages are to be committed when commit data to file
     private int commitCommitLogLeastPages = 4;
@@ -99,6 +99,7 @@ public class MessageStoreConfig {
     private int flushLeastPagesWhenWarmMapedFile = 1024 / 4 * 16;
     // How many pages are to be flushed when flush ConsumeQueue
     private int flushConsumeQueueLeastPages = 2;
+    //刷新CommitLog的频率
     private int flushCommitLogThoroughInterval = 1000 * 10;
     private int commitCommitLogThoroughInterval = 200;
     private int flushConsumeQueueThoroughInterval = 1000 * 60;
@@ -217,10 +218,14 @@ public class MessageStoreConfig {
     }
 
     public int getMappedFileSizeConsumeQueue() {
-
+        // mappedFileSizeConsumeQueue = 300000*20
+        // ConsumeQueue.CQ_STORE_UNIT_SIZE=20
+        // factor = 300000
+        // return 300000*20
         int factor = (int) Math.ceil(this.mappedFileSizeConsumeQueue / (ConsumeQueue.CQ_STORE_UNIT_SIZE * 1.0));
         return (int) (factor * ConsumeQueue.CQ_STORE_UNIT_SIZE);
     }
+
 
     public void setMappedFileSizeConsumeQueue(int mappedFileSizeConsumeQueue) {
         this.mappedFileSizeConsumeQueue = mappedFileSizeConsumeQueue;

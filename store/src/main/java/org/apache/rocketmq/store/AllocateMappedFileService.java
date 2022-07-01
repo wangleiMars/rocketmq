@@ -163,16 +163,16 @@ public class AllocateMappedFileService extends ServiceThread {
             if (req.getMappedFile() == null) {
                 long beginTime = System.currentTimeMillis();
 
-                MappedFile mappedFile;
-                if (messageStore.getMessageStoreConfig().isTransientStorePoolEnable()) {
-                    try {
+                MappedFile mappedFile;//判断是否采用堆外内存
+                if (messageStore.getMessageStoreConfig().isTransientStorePoolEnable()) {//启用了临时存储池（transientStorePoolEnable参数为true，默认为false）并且刷盘模式为异步刷盘并且Broker是Master节点的时候。
+                    try {//如果开启了堆外内存，rocketmq允许外部注入自定义的MappedFile实现
                         mappedFile = ServiceLoader.load(MappedFile.class).iterator().next();
                         mappedFile.init(req.getFilePath(), req.getFileSize(), messageStore.getTransientStorePool());
-                    } catch (RuntimeException e) {
+                    } catch (RuntimeException e) {//如果没有自定义实现，那么就采用默认的实现
                         log.warn("Use default implementation.");
                         mappedFile = new MappedFile(req.getFilePath(), req.getFileSize(), messageStore.getTransientStorePool());
                     }
-                } else {
+                } else {//如果未采用堆外内存，那么就直接采用默认实现
                     mappedFile = new MappedFile(req.getFilePath(), req.getFileSize());
                 }
 
@@ -183,7 +183,7 @@ public class AllocateMappedFileService extends ServiceThread {
                         + " " + req.getFilePath() + " " + req.getFileSize());
                 }
 
-                // pre write mappedFile
+                // pre write mappedFile //预热文件
                 if (mappedFile.getFileSize() >= this.messageStore.getMessageStoreConfig()
                     .getMappedFileSizeCommitLog()
                     &&

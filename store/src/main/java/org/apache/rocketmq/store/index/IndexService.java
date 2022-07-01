@@ -36,20 +36,28 @@ import org.apache.rocketmq.store.config.StorePathConfigHelper;
 public class IndexService {
     private static final InternalLogger log = InternalLoggerFactory.getLogger(LoggerName.STORE_LOGGER_NAME);
     /**
-     * Maximum times to attempt index file creation.
+     * Maximum times to attempt index file creation. 尝试创建IndexFile的最大次数
      */
     private static final int MAX_TRY_IDX_CREATE = 3;
+    //消息存储的操作类
     private final DefaultMessageStore defaultMessageStore;
+    //hash槽合数
     private final int hashSlotNum;
+    //index索引链表个数
     private final int indexNum;
+    //存储的路径
     private final String storePath;
+    //IndexFile的集合
     private final ArrayList<IndexFile> indexFileList = new ArrayList<IndexFile>();
     private final ReadWriteLock readWriteLock = new ReentrantReadWriteLock();
 
     public IndexService(final DefaultMessageStore store) {
         this.defaultMessageStore = store;
+        //获取默认构建的索引个数  默认是的 500w个
         this.hashSlotNum = store.getMessageStoreConfig().getMaxHashSlotNum();
+        //设置索引的个数 默认是 5000000 * 4 也就是2000w个
         this.indexNum = store.getMessageStoreConfig().getMaxIndexNum();
+        //存储的路径
         this.storePath =
             StorePathConfigHelper.getStorePathIndex(store.getMessageStoreConfig().getStorePathRootDir());
     }
@@ -154,25 +162,43 @@ public class IndexService {
         }
     }
 
+    /**
+     * 根据消息以及时间范围查询消息集合的
+     * @param topic
+     * @param key
+     * @param maxNum
+     * @param begin
+     * @param end
+     * @return
+     */
     public QueryOffsetResult queryOffset(String topic, String key, int maxNum, long begin, long end) {
         List<Long> phyOffsets = new ArrayList<Long>(maxNum);
 
         long indexLastUpdateTimestamp = 0;
         long indexLastUpdatePhyoffset = 0;
+        //比较此次要获取的 最大数量 和 配置的 maxMsgsNumBatch 参数。 取最小值
         maxNum = Math.min(maxNum, this.defaultMessageStore.getMessageStoreConfig().getMaxMsgsNumBatch());
         try {
             this.readWriteLock.readLock().lock();
+            //indexFile 不为空 则迭代indexFile 集合
             if (!this.indexFileList.isEmpty()) {
                 for (int i = this.indexFileList.size(); i > 0; i--) {
+                    // 获取IndexFile
                     IndexFile f = this.indexFileList.get(i - 1);
                     boolean lastFile = i == this.indexFileList.size();
+                    //如果是最后一个IndexFile，则记录对应的 最后记录时间 和 最大偏移量
                     if (lastFile) {
                         indexLastUpdateTimestamp = f.getEndTimestamp();
                         indexLastUpdatePhyoffset = f.getEndPhyOffset();
                     }
-
+                    /**
+                     * 检查时间是不是符合 ，
+                     * 1. 开始时间和结束 时间在 IndexFile 头文件记录的beginTimestamp 和endTimestamp 中
+                     * 2. 开始时间 在 beginTimestamp 和endTimestamp 中
+                     * 3. 结束时间 在 beginTimestamp 和endTimestamp 中
+                     */
                     if (f.isTimeMatched(begin, end)) {
-
+                        //获取符合条件的key的物理偏移量
                         f.selectPhyOffset(phyOffsets, buildKey(topic, key), maxNum, begin, end, lastFile);
                     }
 
@@ -198,17 +224,24 @@ public class IndexService {
         return topic + "#" + key;
     }
 
+    /**
+     * 创建消息索引和保存
+     * @param req
+     */
     public void buildIndex(DispatchRequest req) {
+        //尝试获取和创建 IndexFile 最大尝试次数为3 次
         IndexFile indexFile = retryGetAndCreateIndexFile();
         if (indexFile != null) {
             long endPhyOffset = indexFile.getEndPhyOffset();
             DispatchRequest msg = req;
+            //获取消息转存请求中消息的 topic 和 key
             String topic = msg.getTopic();
             String keys = msg.getKeys();
+            //如果消息的CommitLog的物理偏移量 < IndexFile记录的最后一个消息物理结束偏移量，则表示消息已经记录了
             if (msg.getCommitLogOffset() < endPhyOffset) {
                 return;
             }
-
+            //获取消息的类型，如果是事务消息的回滚类型的消息，则直接返回，不进行记录
             final int tranType = MessageSysFlag.getTransactionValue(msg.getSysFlag());
             switch (tranType) {
                 case MessageSysFlag.TRANSACTION_NOT_TYPE:
@@ -220,6 +253,7 @@ public class IndexService {
             }
 
             if (req.getUniqKey() != null) {
+                //保存对应的key的 ， key的格式为 topic + "#" + key
                 indexFile = putKey(indexFile, msg, buildKey(topic, req.getUniqKey()));
                 if (indexFile == null) {
                     log.error("putKey error commitlog {} uniqkey {}", req.getCommitLogOffset(), req.getUniqKey());

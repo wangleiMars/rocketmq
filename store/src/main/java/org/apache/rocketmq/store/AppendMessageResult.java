@@ -26,7 +26,9 @@ public class AppendMessageResult {
     private AppendMessageStatus status;
     // Where to start writing
     private long wroteOffset;
-    // Write Bytes
+    /**
+     *  Write Bytes
+      */
     private int wroteBytes;
     // Message ID
     private String msgId;

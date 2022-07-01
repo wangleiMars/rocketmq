@@ -136,6 +136,7 @@ public class TransactionalMessageServiceImpl implements TransactionalMessageServ
             log.debug("Check topic={}, queues={}", topic, msgQueues);
             for (MessageQueue messageQueue : msgQueues) {
                 long startTime = System.currentTimeMillis();
+                // OP 主题，当事务消息被 Commit 或Rollback后，会将原始事务消息的offset保存在该OP主题中。
                 MessageQueue opQueue = getOpQueue(messageQueue);
                 long halfOffset = transactionalMessageBridge.fetchConsumeOffset(messageQueue);
                 long opOffset = transactionalMessageBridge.fetchConsumeOffset(opQueue);
@@ -147,7 +148,7 @@ public class TransactionalMessageServiceImpl implements TransactionalMessageServ
                 }
 
                 List<Long> doneOpOffset = new ArrayList<>();
-                HashMap<Long, Long> removeMap = new HashMap<>();
+                HashMap<Long, Long> removeMap = new HashMap<>();//用于存储已经执行Commit/Rollback的Half消息位点。
                 PullResult pullResult = fillOpRemoveMap(removeMap, opQueue, opOffset, halfOffset, doneOpOffset);
                 if (null == pullResult) {
                     log.error("The queue={} check msgOffset={} with opOffset={} failed, pullResult is null",
@@ -159,6 +160,8 @@ public class TransactionalMessageServiceImpl implements TransactionalMessageServ
                 long newOffset = halfOffset;
                 long i = halfOffset;
                 while (true) {
+                    // 如果当前回查执行的时间超过了最大允许的执行回查时间，
+                    // 则跳出当前回查过程；如果当前回查的消息已经执行了Commit/Rollback，则忽略当前消息，直接回查下一条消息，
                     if (System.currentTimeMillis() - startTime > MAX_PROCESS_TIME_LIMIT) {
                         log.info("Queue={} process time reach max={}", messageQueue, MAX_PROCESS_TIME_LIMIT);
                         break;
@@ -168,8 +171,13 @@ public class TransactionalMessageServiceImpl implements TransactionalMessageServ
                         Long removedOpOffset = removeMap.remove(i);
                         doneOpOffset.add(removedOpOffset);
                     } else {
+                        /**
+                         * 检查是否有消息需要回查。如果从RMQ_SYS_TRANS_HALF_TOPIC主题中获取 Half 消息为空的次数超过允许的最大次数或者没有消息，
+                         * 那么表示目前没有需要再回查的消息了，可以结束本次回查过程。当然如果传入的位点是非法的，则继续下一个回查的位点。
+                         */
                         GetResult getResult = getHalfMsg(messageQueue, i);
                         MessageExt msgExt = getResult.getMsg();
+
                         if (msgExt == null) {
                             if (getMessageNullCount++ > MAX_RETRY_COUNT_WHEN_HALF_NULL) {
                                 break;
@@ -186,7 +194,7 @@ public class TransactionalMessageServiceImpl implements TransactionalMessageServ
                                 continue;
                             }
                         }
-
+                        // 回查次数检验，消息是否过期检验。如果 Half 消息回查次数已经超过了允许的最大回查次数，则不再回查
                         if (needDiscard(msgExt, transactionCheckMax) || needSkip(msgExt)) {
                             listener.resolveDiscardMsg(msgExt);
                             newOffset = i + 1;
@@ -198,10 +206,11 @@ public class TransactionalMessageServiceImpl implements TransactionalMessageServ
                                 new Date(msgExt.getStoreTimestamp()));
                             break;
                         }
-
-                        long valueOfCurrentMinusBorn = System.currentTimeMillis() - msgExt.getBornTimestamp();
-                        long checkImmunityTime = transactionTimeout;
-                        String checkImmunityTimeStr = msgExt.getUserProperty(MessageConst.PROPERTY_CHECK_IMMUNITY_TIME_IN_SECONDS);
+                        //新发送的 Half消息不用回查，对于不是新发送的 Half消息，如果在免疫回查时间（免疫期）内，
+                        // 也不用回查。免疫期是指生产者在发送Half消息后、执行Commit/Rollback前，Half消息都不需要回查
+                        long valueOfCurrentMinusBorn = System.currentTimeMillis() - msgExt.getBornTimestamp();//当前时间减去消息的发送时间。
+                        long checkImmunityTime = transactionTimeout;//Broker认为的生产者本地事务的最长执行时间。
+                        String checkImmunityTimeStr = msgExt.getUserProperty(MessageConst.PROPERTY_CHECK_IMMUNITY_TIME_IN_SECONDS);//用户设置的消息回查免疫时间，换言之，就是生产者本地事务的最长可执行时间。
                         if (null != checkImmunityTimeStr) {
                             checkImmunityTime = getImmunityTime(checkImmunityTimeStr, transactionTimeout);
                             if (valueOfCurrentMinusBorn < checkImmunityTime) {
@@ -219,15 +228,25 @@ public class TransactionalMessageServiceImpl implements TransactionalMessageServ
                             }
                         }
                         List<MessageExt> opMsg = pullResult.getMsgFoundList();
+                        /**
+                         * 满足如下条件之一就可以执行回查：
+                         * ● 如果没有OP消息，并且当前Half消息在免疫期外。
+                         * ● 当前Half消息存在OP消息，并且最后一个本批次OP消息中的最后一个消息在免疫期外，也就是满足回查时间。
+                         * ● Broker与客户端有时间差。
+                         * ● 重新将当前 Half 消息存储在 RMQ_SYS_TRANS_HALF_TOPIC 主题中。
+                         * 为什么需要重新存储呢？因为回查是一个异步过程，Broker不确定回查的结果是成功还是失败，
+                         * 所以RocketMQ做最坏的打算，如果回查失败则下次继续回查；如果本次回查成功则写入OP消息，
+                         * 下次再读取Half消息时也不会回查。
+                         */
                         boolean isNeedCheck = (opMsg == null && valueOfCurrentMinusBorn > checkImmunityTime)
                             || (opMsg != null && (opMsg.get(opMsg.size() - 1).getBornTimestamp() - startTime > transactionTimeout))
                             || (valueOfCurrentMinusBorn <= -1);
 
                         if (isNeedCheck) {
-                            if (!putBackHalfMsgQueue(msgExt, i)) {
+                            if (!putBackHalfMsgQueue(msgExt, i)) {//需要重新存储
                                 continue;
                             }
-                            listener.resolveHalfMsg(msgExt);
+                            listener.resolveHalfMsg(msgExt);//回查
                         } else {
                             pullResult = fillOpRemoveMap(removeMap, opQueue, pullResult.getNextBeginOffset(), halfOffset, doneOpOffset);
                             log.debug("The miss offset:{} in messageQueue:{} need to get more opMsg, result is:{}", i,

@@ -215,6 +215,7 @@ public class TransactionalMessageBridge {
     public boolean putOpMessage(MessageExt messageExt, String opType) {
         MessageQueue messageQueue = new MessageQueue(messageExt.getTopic(),
             this.brokerController.getBrokerConfig().getBrokerName(), messageExt.getQueueId());
+        // 如果消息被标记为已删除，则调用addRemoveTagInTransactionOp（）方法，利用标记为已删除的 OP消息构造 Message消息对象，
         if (TransactionalMessageUtil.REMOVETAG.equals(opType)) {
             return addRemoveTagInTransactionOp(messageExt, messageQueue);
         }

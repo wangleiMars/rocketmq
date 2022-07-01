@@ -64,10 +64,11 @@ public class IndexFileTest {
 
         final List<Long> phyOffsets = new ArrayList<Long>();
         indexFile.selectPhyOffset(phyOffsets, "60", 10, 0, Long.MAX_VALUE, true);
+        System.out.println(phyOffsets.toString());
         assertThat(phyOffsets).isNotEmpty();
         assertThat(phyOffsets.size()).isEqualTo(1);
-        indexFile.destroy(0);
-        File file = new File("200");
-        UtilAll.deleteFile(file);
+//        indexFile.destroy(0);
+//        File file = new File("200");
+//        UtilAll.deleteFile(file);
     }
 }

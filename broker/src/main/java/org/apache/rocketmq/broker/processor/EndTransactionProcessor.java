@@ -40,7 +40,7 @@ import org.apache.rocketmq.store.PutMessageResult;
 import org.apache.rocketmq.store.config.BrokerRole;
 
 /**
- * EndTransaction processor: process commit and rollback message
+ * EndTransaction processor: process commit and rollback message 本地事务的执行结果
  */
 public class EndTransactionProcessor extends AsyncNettyRequestProcessor implements NettyRequestProcessor {
     private static final InternalLogger LOGGER = InternalLoggerFactory.getLogger(LoggerName.TRANSACTION_LOGGER_NAME);
@@ -124,18 +124,26 @@ public class EndTransactionProcessor extends AsyncNettyRequestProcessor implemen
         }
         OperationResult result = new OperationResult();
         if (MessageSysFlag.TRANSACTION_COMMIT_TYPE == requestHeader.getCommitOrRollback()) {
+            //提交Half消息
             result = this.brokerController.getTransactionalMessageService().commitMessage(requestHeader);
             if (result.getResponseCode() == ResponseCode.SUCCESS) {
+                //Half消息数据校验
                 RemotingCommand res = checkPrepareMessage(result.getPrepareMessage(), requestHeader);
                 if (res.getCode() == ResponseCode.SUCCESS) {
+                    //消息对象类型转化
                     MessageExtBrokerInner msgInner = endMessageTransaction(result.getPrepareMessage());
                     msgInner.setSysFlag(MessageSysFlag.resetTransactionValue(msgInner.getSysFlag(), requestHeader.getCommitOrRollback()));
                     msgInner.setQueueOffset(requestHeader.getTranStateTableOffset());
                     msgInner.setPreparedTransactionOffset(requestHeader.getCommitLogOffset());
                     msgInner.setStoreTimestamp(result.getPrepareMessage().getStoreTimestamp());
                     MessageAccessor.clearProperty(msgInner, MessageConst.PROPERTY_TRANSACTION_PREPARED);
+                    //将还原后的事务消息最终发送到CommitLog中。一旦发送成功，消费者就可以正常拉取消息并消费。
                     RemotingCommand sendResult = sendFinalMessage(msgInner);
                     if (sendResult.getCode() == ResponseCode.SUCCESS) {
+                        //在 sendFinalMessage（）执行成功后，删除 Half 消息。其实RocketMQ是不能真正删除消息的，
+                        // 其实质是顺序写磁盘，相当于做了一个“假删除”。“假删除”通过 putOpMessage（）
+                        // 方法将消息保存到TransactionalMessageUtil.buildOpTopic（）的Topic中，
+                        // 并且做上标记TransactionalMessageUtil.REMOVETAG，表示消息已删除。
                         this.brokerController.getTransactionalMessageService().deletePrepareMessage(result.getPrepareMessage());
                     }
                     return sendResult;
@@ -143,10 +151,11 @@ public class EndTransactionProcessor extends AsyncNettyRequestProcessor implemen
                 return res;
             }
         } else if (MessageSysFlag.TRANSACTION_ROLLBACK_TYPE == requestHeader.getCommitOrRollback()) {
-            result = this.brokerController.getTransactionalMessageService().rollbackMessage(requestHeader);
+            result = this.brokerController.getTransactionalMessageService().rollbackMessage(requestHeader);//查询 Half消息并返回消息对象。
             if (result.getResponseCode() == ResponseCode.SUCCESS) {
-                RemotingCommand res = checkPrepareMessage(result.getPrepareMessage(), requestHeader);
+                RemotingCommand res = checkPrepareMessage(result.getPrepareMessage(), requestHeader);//消息校验
                 if (res.getCode() == ResponseCode.SUCCESS) {
+                    //Rollback并没有真正删除消息，而是标记Half消息为删除，在Broker回查时就会跳过不检查。
                     this.brokerController.getTransactionalMessageService().deletePrepareMessage(result.getPrepareMessage());
                 }
                 return res;

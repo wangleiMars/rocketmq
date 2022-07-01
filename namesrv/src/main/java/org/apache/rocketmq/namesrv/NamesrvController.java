@@ -85,7 +85,7 @@ public class NamesrvController {
         this.registerProcessor();
 
         this.scheduledExecutorService.scheduleAtFixedRate(new Runnable() {
-
+            // Namesrv 主动检测 Broker 是否可用，如果不可用就剔除。生产者、消费者也能通过心跳发现被踢出的路由，从而感知Broker下线。
             @Override
             public void run() {
                 NamesrvController.this.routeInfoManager.scanNotActiveBroker();

@@ -91,7 +91,7 @@ public class SendMessageProcessor extends AbstractSendMessageProcessor implement
                                                                   RemotingCommand request) throws RemotingCommandException {
         final SendMessageContext mqtraceContext;
         switch (request.getCode()) {
-            case RequestCode.CONSUMER_SEND_MSG_BACK:
+            case RequestCode.CONSUMER_SEND_MSG_BACK://消费者失败的情况下，消费者返回消息请求
                 return this.asyncConsumerSendMsgBack(ctx, request);
             default:
                 SendMessageRequestHeader requestHeader = parseRequestHeader(request);
@@ -99,10 +99,10 @@ public class SendMessageProcessor extends AbstractSendMessageProcessor implement
                     return CompletableFuture.completedFuture(null);
                 }
                 mqtraceContext = buildMsgContext(ctx, requestHeader);
-                this.executeSendMessageHookBefore(ctx, request, mqtraceContext);
-                if (requestHeader.isBatch()) {
+                this.executeSendMessageHookBefore(ctx, request, mqtraceContext);//执行hook
+                if (requestHeader.isBatch()) {//是否批量消息
                     return this.asyncSendBatchMessage(ctx, request, mqtraceContext, requestHeader);
-                } else {
+                } else {//普通消息
                     return this.asyncSendMessage(ctx, request, mqtraceContext, requestHeader);
                 }
         }
@@ -267,16 +267,17 @@ public class SendMessageProcessor extends AbstractSendMessageProcessor implement
     private CompletableFuture<RemotingCommand> asyncSendMessage(ChannelHandlerContext ctx, RemotingCommand request,
                                                                 SendMessageContext mqtraceContext,
                                                                 SendMessageRequestHeader requestHeader) {
-        final RemotingCommand response = preSend(ctx, request, requestHeader);
+        final RemotingCommand response = preSend(ctx, request, requestHeader);//发送命令组装
         final SendMessageResponseHeader responseHeader = (SendMessageResponseHeader)response.readCustomHeader();
 
         if (response.getCode() != -1) {
             return CompletableFuture.completedFuture(response);
         }
-
+        //获取请求体
         final byte[] body = request.getBody();
 
         int queueIdInt = requestHeader.getQueueId();
+        //获取topic信息
         TopicConfig topicConfig = this.brokerController.getTopicConfigManager().selectTopicConfig(requestHeader.getTopic());
 
         if (queueIdInt < 0) {
@@ -286,7 +287,7 @@ public class SendMessageProcessor extends AbstractSendMessageProcessor implement
         MessageExtBrokerInner msgInner = new MessageExtBrokerInner();
         msgInner.setTopic(requestHeader.getTopic());
         msgInner.setQueueId(queueIdInt);
-
+        // 重试消息是否加入死信队列
         if (!handleRetryAndDLQ(requestHeader, response, request, msgInner, topicConfig)) {
             return CompletableFuture.completedFuture(response);
         }
@@ -301,7 +302,7 @@ public class SendMessageProcessor extends AbstractSendMessageProcessor implement
         msgInner.setReconsumeTimes(requestHeader.getReconsumeTimes() == null ? 0 : requestHeader.getReconsumeTimes());
         String clusterName = this.brokerController.getBrokerConfig().getBrokerClusterName();
         MessageAccessor.putProperty(msgInner, MessageConst.PROPERTY_CLUSTER, clusterName);
-        if (origProps.containsKey(MessageConst.PROPERTY_WAIT_STORE_MSG_OK)) {
+        if (origProps.containsKey(MessageConst.PROPERTY_WAIT_STORE_MSG_OK)) {//移除一个消息属性减少消息占用，保持每条消息保存9个字节消息头
             // There is no need to store "WAIT=true", remove it from propertiesString to save 9 bytes for each message.
             // It works for most case. In some cases msgInner.setPropertiesString invoked later and replace it.
             String waitStoreMsgOKValue = origProps.remove(MessageConst.PROPERTY_WAIT_STORE_MSG_OK);
@@ -313,19 +314,21 @@ public class SendMessageProcessor extends AbstractSendMessageProcessor implement
         }
 
         CompletableFuture<PutMessageResult> putMessageResult = null;
-        String transFlag = origProps.get(MessageConst.PROPERTY_TRANSACTION_PREPARED);
+        String transFlag = origProps.get(MessageConst.PROPERTY_TRANSACTION_PREPARED);//是否为事务消息
         if (transFlag != null && Boolean.parseBoolean(transFlag)) {
-            if (this.brokerController.getBrokerConfig().isRejectTransactionMessage()) {
+            if (this.brokerController.getBrokerConfig().isRejectTransactionMessage()) {//事务消息的处理
                 response.setCode(ResponseCode.NO_PERMISSION);
                 response.setRemark(
                         "the broker[" + this.brokerController.getBrokerConfig().getBrokerIP1()
                                 + "] sending transaction message is forbidden");
                 return CompletableFuture.completedFuture(response);
             }
+            //保存消息
             putMessageResult = this.brokerController.getTransactionalMessageService().asyncPrepareMessage(msgInner);
         } else {
             putMessageResult = this.brokerController.getMessageStore().asyncPutMessage(msgInner);
         }
+        //消息保存完的后续处理
         return handlePutMessageResultFuture(putMessageResult, response, request, msgInner, responseHeader, mqtraceContext, ctx, queueIdInt);
     }
 

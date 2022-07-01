@@ -54,16 +54,28 @@ import org.apache.rocketmq.store.config.StorePathConfigHelper;
 
 public class ScheduleMessageService extends ConfigManager {
     private static final InternalLogger log = InternalLoggerFactory.getLogger(LoggerName.STORE_LOGGER_NAME);
-
+    /**
+     * 第一次执行定时任务的延迟时间
+     */
     private static final long FIRST_DELAY_TIME = 1000L;
+    /**
+     * 第二次及以后的定时任务检查间隔时间
+     */
     private static final long DELAY_FOR_A_WHILE = 100L;
+    /**
+     * 如果延迟消息到时间投递时却失败了，会在DELAY_FOR_A_PERIOD ms后重新尝试投递
+     */
     private static final long DELAY_FOR_A_PERIOD = 10000L;
     private static final long WAIT_FOR_SHUTDOWN = 5000L;
     private static final long DELAY_FOR_A_SLEEP = 10L;
-
+    /**
+     * 保存延迟级别和延迟时间的映射关系
+     */
     private final ConcurrentMap<Integer /* level */, Long/* delay timeMillis */> delayLevelTable =
         new ConcurrentHashMap<Integer, Long>(32);
-
+    /**
+     * 保存延迟级别及相应的消费位点
+     */
     private final ConcurrentMap<Integer /* level */, Long/* offset */> offsetTable =
         new ConcurrentHashMap<Integer, Long>(32);
     private final DefaultMessageStore defaultMessageStore;
@@ -84,10 +96,20 @@ public class ScheduleMessageService extends ConfigManager {
         }
     }
 
+    /**
+     * 将queue id转化为延迟级别。
+     * @param queueId
+     * @return
+     */
     public static int queueId2DelayLevel(final int queueId) {
         return queueId + 1;
     }
 
+    /**
+     * 将延迟级别转化为queue id。
+     * @param delayLevel
+     * @return
+     */
     public static int delayLevel2QueueId(final int delayLevel) {
         return delayLevel - 1;
     }
@@ -112,10 +134,21 @@ public class ScheduleMessageService extends ConfigManager {
         }
     }
 
+    /**
+     * 更新延迟消息的Topic的消费位点。
+     * @param delayLevel
+     * @param offset
+     */
     private void updateOffset(int delayLevel, long offset) {
         this.offsetTable.put(delayLevel, offset);
     }
 
+    /**
+     * 根据延迟级别和消息的存储时间计算该延迟消息的投递时间。
+     * @param delayLevel
+     * @param storeTimestamp
+     * @return
+     */
     public long computeDeliverTimestamp(final int delayLevel, final long storeTimestamp) {
         Long time = this.delayLevelTable.get(delayLevel);
         if (time != null) {
@@ -205,6 +238,12 @@ public class ScheduleMessageService extends ConfigManager {
         return this.encode(false);
     }
 
+    /**
+     * 加载延迟消息的消费位点信息和全部延迟级别信息，
+     * 延迟级别可以通过messageDelayLevel字段进行设置，
+     * 默认值为1s、5s、10s、30s、1m、2m、3m、4m、5m、6m、7m、8m、9m、10m、20m、30m、1h、2h。
+     * @return
+     */
     @Override
     public boolean load() {
         boolean result = super.load();
@@ -273,6 +312,10 @@ public class ScheduleMessageService extends ConfigManager {
         return delayOffsetSerializeWrapper.toJson(prettyFormat);
     }
 
+    /**
+     * 格式化所有延迟级别信息，并保存到内存中。
+     * @return
+     */
     public boolean parseDelayLevel() {
         HashMap<String, Long> timeUnitTable = new HashMap<String, Long>();
         timeUnitTable.put("s", 1000L);
@@ -338,6 +381,9 @@ public class ScheduleMessageService extends ConfigManager {
         return msgInner;
     }
 
+    /**
+     * 内部类用于检查延迟消息是否可以投递，
+     */
     class DeliverDelayedMessageTimerTask implements Runnable {
         private final int delayLevel;
         private final long offset;

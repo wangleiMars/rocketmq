@@ -22,15 +22,37 @@ package org.apache.rocketmq.store;
 
 import java.io.File;
 import java.io.IOException;
+import java.security.MessageDigest;
+import java.util.Objects;
+import java.util.concurrent.CountDownLatch;
 
 import org.apache.rocketmq.common.UtilAll;
+import org.apache.rocketmq.common.consistenthash.ConsistentHashRouter;
+import org.apache.rocketmq.store.config.FlushDiskType;
+import org.apache.rocketmq.store.config.MessageStoreConfig;
 import org.junit.After;
 import org.junit.Test;
+import sun.security.provider.MD5;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 public class MappedFileTest {
     private final String storeMessage = "Once, there was a chance for me!";
+
+    public static void main(String[] args) throws Exception {
+        CountDownLatch countDownLatch = new CountDownLatch(1);
+
+        MessageStoreConfig messageStoreConfig = new MessageStoreConfig();
+        TransientStorePool transientStorePool = new TransientStorePool(messageStoreConfig);
+        String fileName = UtilAll.offset2FileName(0);
+        System.out.println(fileName);
+        MappedFile mappedFile = new MappedFile("/Users/wanglei/logs/" + fileName, 1024 * 1024 * 1024, transientStorePool);
+
+
+        mappedFile.warmMappedFile(FlushDiskType.SYNC_FLUSH, 1024 * 1024 * 1024);
+//        boolean result = mappedFile.appendMessage(storeMessage.getBytes());
+        countDownLatch.await();
+    }
 
     @Test
     public void testSelectMappedBuffer() throws IOException {
@@ -56,5 +78,22 @@ public class MappedFileTest {
     public void destory() {
         File file = new File("target/unit_test_store");
         UtilAll.deleteFile(file);
+    }
+
+    @Test
+    public void testHashCode() throws Exception {
+
+        String str = "https://blog.csdn.net/szhlcy/article/details/115907118";
+        System.out.println(str.hashCode());
+
+        System.out.println(Objects.hash("2019-03", "195"));
+        System.out.println(Objects.hash("2019-04", "185"));
+
+        str = "2019-03" + "195";
+        System.out.println(str.hashCode());
+
+        str = "2019-04" + "185";
+        System.out.println(str.hashCode());
+
     }
 }
